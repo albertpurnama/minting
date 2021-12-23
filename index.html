@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/png"
+    href="https://api.typedream.com/v0/document/public/31a1c8df-9284-4859-8c5b-5d3187a2656d_favicon_ico.ico">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script type="module" src="/src/index.ts" data-td-web3-fail-redirect-path="/"
+    data-td-web3-protected-paths="/private, /blog, /web3"
+    data-td-web3-contract-address="0xc1C6A331D4013f40Ca830C06eD47564D0d2b21cD"></script>
+  <title>Test Document</title>
+</head>
+
+<body>
+  <div style="
+    display: flex;
+    flex-direction: column;
+  ">
+    <input id="nft-token-id-input" placeholder="Insert token ID" type="number" style="
+      text-align: center;
+      padding: 10px;
+      margin-bottom: 5px;
+      border-radius: 7px;
+    " />
+    <button id="mint-nft-button"
+      style="padding: 10px; background-color: black; color: white; border-radius: 7px;"></button>
+    <a href="/private#web3-auth-connect-button">
+      <button id="connect-wallet-button"
+        style="padding: 10px; background-color: black; color: white; border-radius: 7px;">Connect Wallet</button>
+    </a>
+    <button id="get-balance-button"
+      style="padding: 10px; background-color: white; color: black; border: 1px solid black; border-radius: 7px;">Get
+      balance</button>
+  </div>
+</body>
+
+</html>
