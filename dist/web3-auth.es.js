@@ -15380,6 +15380,14 @@ var dist = detectEthereumProvider;
 const ATTR_CONTRACT_ADDRESS = "data-td-web3-contract-address";
 const ATTR_PROTECTED_PATHS = "data-td-web3-protected-paths";
 const ATTR_FAIL_REDIRECT_PATH = "data-td-web3-fail-redirect-path";
+const ATTR_DISCORD_CHANNEL_ID = "data-td-discord-channel-id";
+const ATTR_CONTRACT_CHAIN_ID = "data-td-contract-chain-id";
+const chainMap = {
+  "0x89": {
+    rpcURL: "https://polygon-rpc.com/"
+  },
+  "0x1": {}
+};
 const funcCalls = ["function balanceOf(address _owner) external view returns(uint256)"];
 const connectWalletButtonId = "web3-auth-connect-button";
 const redirectPath = getScriptAttribute(ATTR_FAIL_REDIRECT_PATH);
@@ -15394,6 +15402,8 @@ const TOKEN_CONTRACT_ADDRESS = getScriptAttribute(ATTR_CONTRACT_ADDRESS);
 if (!TOKEN_CONTRACT_ADDRESS) {
   throw `token contract address not found. ${ATTR_CONTRACT_ADDRESS} is required!`;
 }
+const discordChannelID = getScriptAttribute(ATTR_DISCORD_CHANNEL_ID);
+const contractChainID = getScriptAttribute(ATTR_CONTRACT_CHAIN_ID) || "0x1";
 const retryAfter = (f2, t, n) => {
   if (n < 1 || f2())
     return;
@@ -15404,9 +15414,9 @@ function getScriptAttribute(attr) {
   return (_a = document.querySelector(`[${attr}]`)) == null ? void 0 : _a.getAttribute(`${attr}`);
 }
 let currentAccount = null;
-let connectedChainId = null;
 const OverlayContainerID = "typedream-web3-auth-loading-container";
 const renderOverlay = (elem) => {
+  console.log("rendering Overlay");
   let overlayContainer = document.createElement("div");
   overlayContainer.id = OverlayContainerID;
   overlayContainer.style.position = "absolute";
@@ -15468,16 +15478,14 @@ const attachConnectButtonHandlers = () => {
   return true;
 };
 function handleUnauthorized() {
-  removeLoading();
   window.location.href = redirectPath;
+  removeLoading();
   console.log("unauthorized");
 }
 function handleInconsistentProvider() {
   console.error("inconsistent ethereum provider, please disconnect any wallet that's not metamask");
 }
 async function handleAuthentication() {
-  if (!connectedChainId || !currentAccount)
-    return;
   if (!currentAccount)
     handleUnauthorized();
   try {
@@ -15488,41 +15496,100 @@ async function handleAuthentication() {
       const connectedContract = new Contract(TOKEN_CONTRACT_ADDRESS, funcCalls, signer);
       console.log(signer, currentAccount);
       let bal = await connectedContract.balanceOf(currentAccount);
-      if (!bal.gt(BigNumber.from(0)))
+      if (!bal.gt(BigNumber.from(0))) {
         handleUnauthorized();
+        throw "unauthorized";
+      }
       handleAuthenticationSuccessful();
     } else {
       console.log("Ethereum object doesn't exist!");
     }
   } catch (error) {
-    console.error(error);
     handleUnauthorized();
+    throw error;
   }
 }
 const handleAuthenticationSuccessful = () => {
   removeLoading();
 };
-const handleChainChanged = (chainId) => {
-  connectedChainId = chainId;
-  handleAuthentication();
+const requestChangeNetwork = async () => {
+  const { ethereum } = window;
+  if (ethereum) {
+    try {
+      console.log("requesting chain switch");
+      await ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: contractChainID }]
+      });
+    } catch (error) {
+      if (error.code === 4902) {
+        if (!chainMap[contractChainID])
+          throw "Chain not supported yet!";
+        try {
+          await ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: contractChainID,
+                rpcUrl: chainMap[contractChainID].rpcURL
+              }
+            ]
+          });
+        } catch (addError) {
+          console.error(addError);
+        }
+      }
+      console.error(error);
+    }
+  } else {
+    alert("MetaMask is not installed. Please consider installing it: https://metamask.io/download.html");
+  }
 };
-const handleAccountsChanged = (accounts) => {
+const handleChainChanged = async (chainId) => {
+  if (chainId != contractChainID) {
+    await requestChangeNetwork();
+  }
+  await handleAuthentication();
+};
+const handleAccountsChanged = async (accounts) => {
   if (accounts.length === 0) {
     handleUnauthorized();
   } else {
     currentAccount = accounts[0];
   }
-  handleAuthentication();
+  const { ethereum } = window;
+  if (!ethereum)
+    handleUnauthorized();
+  await ethereum.request({ method: "eth_chainId" }).then(handleChainChanged).catch((e) => {
+    console.log("handleAccountsChanged throw error");
+    throw e;
+  });
 };
 const handleAccountsRequestError = (err) => {
+  console.log("account request error");
   console.error(err);
 };
 function handleRequestAccount(successRedirectURL) {
   const { ethereum } = window;
   if (!ethereum)
     handleUnauthorized();
-  console.log("handleRequestAccount");
-  ethereum.request({ method: "eth_requestAccounts" }).then(handleAccountsChanged).then(() => window.location.href = successRedirectURL).catch(handleAccountsRequestError);
+  ethereum.request({ method: "eth_requestAccounts" }).then(handleAccountsChanged).then(async () => {
+    console.log("handleAccountsChanged");
+    if (discordChannelID) {
+      const url = "https://discord-mask-h6fe4.ondigitalocean.app/v0/discord/instant-invite";
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          channel_id: discordChannelID
+        })
+      }).then((r2) => r2.text()).then((redirectURL) => window.location.href = redirectURL);
+    } else {
+      window.location.href = successRedirectURL;
+    }
+  }).catch(handleAccountsRequestError);
 }
 const isProtectedPage = () => {
   const loc = window.location.pathname;
@@ -15530,15 +15597,22 @@ const isProtectedPage = () => {
     return false;
   return protectedPaths.split(",").map((val) => val.replace(/\s/g, "")).some((val) => loc.startsWith(val));
 };
+function unsafeCheckTypedreamSite() {
+  return document.head.querySelector("link[rel='icon'][href^='https://api.typedream.com']") !== null;
+}
+console.log("connected v0.1.3");
 const pageIsProtected = isProtectedPage();
+const isTypedreamSite = unsafeCheckTypedreamSite();
 document.addEventListener("DOMContentLoaded", () => {
-  var _a;
-  let bodyElem = (_a = document.getElementsByTagName("body")) == null ? void 0 : _a[0];
-  if (bodyElem)
-    renderOverlay(bodyElem);
   retryAfter(attachConnectButtonHandlers, 200, 10);
 });
-if (pageIsProtected) {
+if (isTypedreamSite && pageIsProtected) {
+  document.addEventListener("DOMContentLoaded", () => {
+    var _a;
+    let bodyElem = (_a = document.getElementsByTagName("body")) == null ? void 0 : _a[0];
+    if (bodyElem)
+      renderOverlay(bodyElem);
+  });
   const { ethereum } = window;
   if (!ethereum)
     handleUnauthorized();
@@ -15546,8 +15620,6 @@ if (pageIsProtected) {
     if (provider != ethereum)
       handleInconsistentProvider();
   });
-  ethereum.request({ method: "eth_chainId" }).then(handleChainChanged);
-  ethereum.on("chainChanged", handleChainChanged);
   ethereum.request({ method: "eth_accounts" }).then(handleAccountsChanged).catch(handleAccountsRequestError);
   ethereum.on("accountsChanged", handleAccountsChanged);
 } else {

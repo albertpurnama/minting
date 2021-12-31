@@ -7,6 +7,18 @@ import detectEthereumProvider from '@metamask/detect-provider';
 const ATTR_CONTRACT_ADDRESS = 'data-td-web3-contract-address';
 const ATTR_PROTECTED_PATHS = 'data-td-web3-protected-paths';
 const ATTR_FAIL_REDIRECT_PATH = 'data-td-web3-fail-redirect-path';
+const ATTR_DISCORD_CHANNEL_ID = 'data-td-discord-channel-id';
+const ATTR_CONTRACT_CHAIN_ID = 'data-td-contract-chain-id';
+
+// Supported chains
+const chainMap = {
+  "0x89": {
+    rpcURL: "https://polygon-rpc.com/",
+  },
+  "0x1": {
+    // use whatever from metamask, this shouldn't be used
+  }
+}
 
 const funcCalls = ["function balanceOf(address _owner) external view returns(uint256)"];
 const connectWalletButtonId = 'web3-auth-connect-button';
@@ -26,6 +38,8 @@ const TOKEN_CONTRACT_ADDRESS = getScriptAttribute(ATTR_CONTRACT_ADDRESS);
 if (!TOKEN_CONTRACT_ADDRESS) {
   throw `token contract address not found. ${ATTR_CONTRACT_ADDRESS} is required!`
 }
+const discordChannelID = getScriptAttribute(ATTR_DISCORD_CHANNEL_ID);
+const contractChainID = getScriptAttribute(ATTR_CONTRACT_CHAIN_ID) || '0x1';
 
 // ********************************
 // END OF CONSTANTS
@@ -54,7 +68,6 @@ function getScriptAttribute(attr: string): string | null {
 // START OF STATES
 // ********************************
 let currentAccount = null;
-let connectedChainId = null;
 // ********************************
 // END OF STATES
 // ********************************
@@ -130,6 +143,7 @@ const attachConnectButtonHandlers = (): boolean => {
     const redirectAfterSuccessURL = btn.getAttribute('href');
     handleRequestAccount(redirectAfterSuccessURL);
   }))
+
   return true
 }
 // ********************************
@@ -143,8 +157,8 @@ const attachConnectButtonHandlers = (): boolean => {
 // handleUnauthorized handles unauthorized access to the page.
 function handleUnauthorized() {
   // redirect out
-  removeLoading();
   window.location.href = redirectPath;
+  removeLoading();
 
   // TEMPORARY
   console.log('unauthorized');
@@ -158,14 +172,14 @@ function handleInconsistentProvider() {
 
 // handleAuthentication
 async function handleAuthentication() {
-  if (!connectedChainId || !currentAccount) return;
   if (!currentAccount) handleUnauthorized();
 
   try {
-    const { ethereum } = window;
+    const { ethereum } = (window as any);
 
     if (ethereum) {
       const provider = new ethers.providers.Web3Provider(ethereum);
+
       const signer = provider.getSigner();
       const connectedContract = new ethers.Contract(TOKEN_CONTRACT_ADDRESS, funcCalls, signer);
       console.log(signer, currentAccount);
@@ -173,14 +187,19 @@ async function handleAuthentication() {
       let bal = (await connectedContract.balanceOf(currentAccount)) as BigNumber;
 
       // Condition in which the user should not be able to authenticate.
-      if (!bal.gt(BigNumber.from(0))) handleUnauthorized();
+      if (!bal.gt(BigNumber.from(0))) {
+        handleUnauthorized();
+        throw "unauthorized";
+      }
+
       handleAuthenticationSuccessful();
     } else {
       console.log("Ethereum object doesn't exist!");
     }
   } catch (error) {
-    console.error(error)
     handleUnauthorized();
+    // need to bubble up the throw here so it's caught by handleRequestAccount
+    throw error;
   }
 }
 
@@ -188,15 +207,59 @@ const handleAuthenticationSuccessful = () => {
   removeLoading();
 }
 
+// requestChangeNetwork sends request to wallet to change ethereum chain
+const requestChangeNetwork = async () => {
+  // Check if MetaMask is installed
+  // MetaMask injects the global API into window.ethereum
+  const { ethereum } = window as any;
+  if (ethereum) {
+    try {
+      console.log('requesting chain switch')
+      // check if the chain to connect to is installed
+      await ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: contractChainID }], // chainId must be in hexadecimal numbers
+      });
+    } catch (error) {
+      // This error code indicates that the chain has not been added to MetaMask
+      // if it is not, then install it into the user MetaMask
+      if (error.code === 4902) {
+        // make sure we support the chain.
+        if (!chainMap[contractChainID]) throw "Chain not supported yet!";
+        try {
+          await ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [
+              {
+                chainId: contractChainID,
+                rpcUrl: chainMap[contractChainID].rpcURL,
+              },
+            ],
+          });
+        } catch (addError) {
+          console.error(addError);
+        }
+      }
+      console.error(error);
+    }
+  } else {
+    // if no window.ethereum then MetaMask is not installed
+    alert('MetaMask is not installed. Please consider installing it: https://metamask.io/download.html');
+  }
+}
+
 // handleChainChanged should handle chain changes per EIP-1193
-const handleChainChanged = (chainId: string) => {
-  connectedChainId = chainId;
+const handleChainChanged = async (chainId: string) => {
+  if (chainId != contractChainID) {
+    // request change network first
+    await requestChangeNetwork();
+  }
   // window.location.reload();
-  handleAuthentication();
+  await handleAuthentication();
 }
 
 // handleAccountsChanged handles re-authorization when account is changed
-const handleAccountsChanged = (accounts: Array<string>) => {
+const handleAccountsChanged = async (accounts: Array<string>) => {
   if (accounts.length === 0) {
     // handleRequestAccount();
     handleUnauthorized();
@@ -204,11 +267,21 @@ const handleAccountsChanged = (accounts: Array<string>) => {
     currentAccount = accounts[0];
   }
 
-  // authenticate
-  handleAuthentication()
+  // Check whether etherum provider exist.
+  const { ethereum } = window as any;
+  if (!ethereum) handleUnauthorized();
+
+  // check if this account is connected to the correct chain
+  await ethereum
+    .request({ method: 'eth_chainId' })
+    .then(handleChainChanged)
+    .catch((e) => {
+      console.log('handleAccountsChanged throw error'); throw e
+    })
 }
 
 const handleAccountsRequestError = (err: any) => {
+  console.log("account request error")
   console.error(err);
 }
 
@@ -216,10 +289,27 @@ const handleAccountsRequestError = (err: any) => {
 function handleRequestAccount(successRedirectURL: string) {
   const { ethereum } = window as any;
   if (!ethereum) handleUnauthorized();
-  console.log("handleRequestAccount")
   ethereum.request({ method: 'eth_requestAccounts' })
     .then(handleAccountsChanged)
-    .then(() => window.location.href = successRedirectURL)
+    .then(async () => {
+      console.log('handleAccountsChanged');
+      if (discordChannelID) {
+        const url = "https://discord-mask-h6fe4.ondigitalocean.app/v0/discord/instant-invite"
+        await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            channel_id: discordChannelID
+          })
+        })
+          .then(r => r.text())
+          .then(redirectURL => window.location.href = redirectURL)
+      } else {
+        window.location.href = successRedirectURL
+      }
+    })
     .catch(handleAccountsRequestError);
 }
 
@@ -247,8 +337,15 @@ function unsafeCheckTypedreamSite(): boolean {
 // START OF INITIALIZATION
 // ********************************
 // Check whether this is a protected page based on path
+console.log('connected v0.1.3')
 const pageIsProtected = isProtectedPage();
 const isTypedreamSite = unsafeCheckTypedreamSite();
+
+// attach DOM components after DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+  // attach handlers to buttons
+  retryAfter(attachConnectButtonHandlers, 200, 10);
+})
 
 if (isTypedreamSite && pageIsProtected) {
   // attach DOM components after DOMContentLoaded
@@ -256,9 +353,6 @@ if (isTypedreamSite && pageIsProtected) {
     // attach overlay
     let bodyElem = document.getElementsByTagName('body')?.[0];
     if (bodyElem) renderOverlay(bodyElem);
-
-    // attach handlers to buttons
-    retryAfter(attachConnectButtonHandlers, 200, 10);
   })
 
   // Check whether etherum provider exist.
@@ -269,13 +363,6 @@ if (isTypedreamSite && pageIsProtected) {
   detectEthereumProvider().then((provider) => {
     if (provider != ethereum) handleInconsistentProvider();
   });
-
-  // Check if it's connected to the correct network.
-  ethereum
-    .request({ method: 'eth_chainId' })
-    .then(handleChainChanged);
-
-  ethereum.on('chainChanged', handleChainChanged);
 
   // Check connected user's account.
   ethereum
