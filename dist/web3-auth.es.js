@@ -15386,7 +15386,8 @@ const chainMap = {
   "0x89": {
     rpcURL: "https://polygon-rpc.com/"
   },
-  "0x1": {}
+  "0x1": {},
+  "0x4": {}
 };
 const funcCalls = ["function balanceOf(address _owner) external view returns(uint256)"];
 const connectWalletButtonId = "web3-auth-connect-button";
@@ -15600,7 +15601,7 @@ const isProtectedPage = () => {
 function unsafeCheckTypedreamSite() {
   return document.head.querySelector("link[rel='icon'][href^='https://api.typedream.com']") !== null;
 }
-console.log("connected v0.1.3");
+console.log("connected v0.1.4");
 const pageIsProtected = isProtectedPage();
 const isTypedreamSite = unsafeCheckTypedreamSite();
 document.addEventListener("DOMContentLoaded", () => {
@@ -15620,7 +15621,10 @@ if (isTypedreamSite && pageIsProtected) {
     if (provider != ethereum)
       handleInconsistentProvider();
   });
-  ethereum.request({ method: "eth_accounts" }).then(handleAccountsChanged).catch(handleAccountsRequestError);
+  ethereum.request({ method: "eth_accounts" }).then((accts) => {
+    currentAccount = accts[0];
+    handleAuthentication();
+  }).catch(handleAccountsRequestError);
   ethereum.on("accountsChanged", handleAccountsChanged);
 } else {
   removeLoading();

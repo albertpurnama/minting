@@ -17,6 +17,9 @@ const chainMap = {
   },
   "0x1": {
     // use whatever from metamask, this shouldn't be used
+  },
+  "0x4": {
+    // use whatever from metamask, this shouldn't be used
   }
 }
 
@@ -337,7 +340,7 @@ function unsafeCheckTypedreamSite(): boolean {
 // START OF INITIALIZATION
 // ********************************
 // Check whether this is a protected page based on path
-console.log('connected v0.1.3')
+console.log('connected v0.1.4')
 const pageIsProtected = isProtectedPage();
 const isTypedreamSite = unsafeCheckTypedreamSite();
 
@@ -367,7 +370,10 @@ if (isTypedreamSite && pageIsProtected) {
   // Check connected user's account.
   ethereum
     .request({ method: 'eth_accounts' })
-    .then(handleAccountsChanged)
+    .then((accts) => {
+      currentAccount = accts[0];
+      handleAuthentication();
+    })
     .catch(handleAccountsRequestError)
 
   ethereum.on('accountsChanged', handleAccountsChanged)
